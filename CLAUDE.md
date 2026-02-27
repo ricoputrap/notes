@@ -62,13 +62,12 @@ Co-Authored-By: Claude Haiku 4.5 <noreply@anthropic.com>
 ```
 
 **Types:**
-- `feat` - New learning material or note
+- `add` - New learning material or note
 - `update` - Significant expansion or revision of existing notes
 - `fix` - Correction or improvement to existing content
-- `docs` - Documentation or README changes
 
 **Examples:**
-- `feat(react): add hooks patterns guide`
+- `add(react): hooks patterns guide`
 - `update(nestjs): expand database integration section`
 - `fix(nestjs): clarify middleware execution order`
 
