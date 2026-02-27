@@ -26,6 +26,7 @@ When adding new documentation files:
 4. **Add decision-making tips** - Include "80/20 Tips" or "Key Takeaways" sections
 5. **Keep it scannable** - Use bullet points, bold text, and consistent formatting
 6. **Link to detailed guides** - Reference external docs where deeper learning is available
+7. **Update README.md** - Add a link to the new note in the README.md file for easy navigation
 
 ## Naming Conventions
 
