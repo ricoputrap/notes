@@ -40,3 +40,49 @@ Important concept collections should also be saved to the memory system at `/Use
 - Each topic gets a dedicated memory file (e.g., `nestjs.md`)
 - Memory files should be concise summaries linked to the full guides in this repo
 - Update memory files when notes are significantly expanded or corrected
+
+## Git Workflow
+
+**This is critical:** To prevent losing work, commit and push to GitHub regularly.
+
+### Commit Frequency
+- After adding or significantly updating any markdown file
+- After creating new memory files
+- After expanding existing notes with meaningful content
+- Don't wait until the end of a session—commit as you go
+
+### Commit Message Format
+Use **conventional commits** for consistency:
+```
+<type>(<scope>): <subject>
+
+<body>
+
+Co-Authored-By: Claude Haiku 4.5 <noreply@anthropic.com>
+```
+
+**Types:**
+- `feat` - New learning material or note
+- `update` - Significant expansion or revision of existing notes
+- `fix` - Correction or improvement to existing content
+- `docs` - Documentation or README changes
+
+**Examples:**
+- `feat(react): add hooks patterns guide`
+- `update(nestjs): expand database integration section`
+- `fix(nestjs): clarify middleware execution order`
+
+### Push to GitHub
+Always push after committing:
+```bash
+git push origin main
+```
+
+This ensures all work is backed up and accessible from anywhere. Never accumulate unpushed commits.
+
+### Quick Checklist
+- [ ] Made changes to markdown or memory files
+- [ ] Staged changes: `git add <file>`
+- [ ] Committed with conventional commit message
+- [ ] Pushed to GitHub: `git push origin main`
+- [ ] Verified on https://github.com/ricoputrap/notes
