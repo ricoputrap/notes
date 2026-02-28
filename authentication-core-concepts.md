@@ -114,11 +114,10 @@ app.post('/logout', (req, res) => {
 1. User submits username/password
 2. Server validates credentials
 3. Server generates JWT token (contains user info + signature)
-4. Server sends token to client
-5. Client stores token (localStorage, sessionStorage, or memory)
-6. Client sends token in Authorization header: "Bearer <token>"
-7. Server verifies token signature and extracts user info
-8. User logs out → client deletes token (server doesn't need to do anything)
+4. Server sends token to client (in response body or HTTP-only cookie)
+5. Client sends token in Authorization header OR browser auto-sends cookie
+6. Server verifies token signature and extracts user info
+7. User logs out → client deletes token or server invalidates it
 ```
 
 ### JWT Structure
@@ -138,6 +137,104 @@ signature: HMACSHA256(base64(header) + "." + base64(payload), secret)
 - **Portable**: Works across domains and services (microservices)
 - **Mobile-friendly**: Works with any HTTP client
 - **No built-in logout**: Must implement token blacklist for immediate logout
+
+### Token Storage: A Critical Decision
+
+**The Question**: Should the server send the token in the JSON response body or as an HTTP-only cookie?
+
+This is **not a technical requirement**—it's an architectural choice with trade-offs:
+
+#### Option A: JSON Response Body (Common in Modern SPAs)
+
+**Server sends:**
+```json
+{ "accessToken": "eyJhbGc...", "userId": 123 }
+```
+
+**Client stores in:**
+- `localStorage` ❌ (Vulnerable to XSS)
+- `sessionStorage` ❌ (Vulnerable to XSS, clears on tab close)
+- Memory/State ✅ (Safe from XSS, lost on refresh)
+
+| Pros | Cons |
+|------|------|
+| Works with all clients (web, mobile, CLI) | Client must implement storage logic |
+| Client has explicit control | localStorage/sessionStorage expose to XSS |
+| Works across domains (CORS-friendly) | Memory storage requires re-login on refresh |
+| Standard for mobile/microservices | Requires careful XSS protection |
+
+#### Option B: HTTP-Only Cookie (Safer for Web Apps)
+
+**Server automatically sets:**
+```
+Set-Cookie: accessToken=eyJhbGc...; HttpOnly; Secure; SameSite=Strict
+```
+
+**Browser automatically sends** in each request.
+
+| Pros | Cons |
+|------|------|
+| XSS-proof (JavaScript can't access) | Browser-specific (doesn't work for mobile/CLI) |
+| Automatic (no client code needed) | CORS limitations for cross-domain requests |
+| Logout can be server-side | Less common in modern SPA architectures |
+| Simple and secure by default | Less transparent to client |
+
+### The Real Situation
+
+Here's why there's confusion:
+
+1. **JWT was created for microservices and mobile apps** where you can't rely on browser cookies
+2. **It became the default** for all SPA development, even though it's introducing unnecessary XSS risk
+3. **HTTP-only cookies would actually be safer** for traditional web apps
+
+### What You Should Actually Do
+
+**For a traditional web app (HTML from same backend):**
+```typescript
+// ✅ BEST: Use HTTP-only cookies with session-based auth
+// No need for JWT at all - sessions are simpler and safer
+app.use(session({ cookie: { httpOnly: true, secure: true } }));
+```
+
+**For a Single Page App (React/Vue/Angular):**
+```typescript
+// Option A: ✅ RECOMMENDED
+// HTTP-only cookie for access token + CSRF protection
+// Browser sends automatically, XSS-proof
+res.cookie('accessToken', token, {
+  httpOnly: true,
+  secure: true,
+  sameSite: 'strict'
+});
+return { success: true };
+
+// Option B: Acceptable with care
+// Access token in memory (XSS safe), Refresh token in HTTP-only cookie
+// Balances security with UX (don't lose token on refresh)
+res.cookie('refreshToken', refreshToken, {
+  httpOnly: true,
+  secure: true,
+  sameSite: 'strict'
+});
+return { accessToken: token }; // Client stores in memory
+```
+
+**For a mobile app:**
+```typescript
+// Only option: Send token in response body
+// Mobile stores in secure local storage
+return { accessToken: token, refreshToken: refreshToken };
+```
+
+### Why This Matters
+
+| Storage | XSS Risk | CSRF Risk | Re-login on Refresh | Revocation |
+|---------|----------|-----------|---------------------|------------|
+| localStorage | 🔴 High | Safe | No | Hard (blacklist) |
+| Memory | 🟢 Safe | Safe | 🟡 Requires refresh token | Easy (delete) |
+| HTTP-only cookie | 🟢 Safe | 🟡 Need CSRF token | No | Easy (server-side) |
+
+**The paradox**: The most common pattern (JSON response + localStorage) is less secure than it needs to be.
 
 ### Simple Example (NestJS)
 
@@ -458,17 +555,23 @@ Use two tokens:
 | **Access Token** | 15 min | Call APIs | Memory (cleared on refresh) |
 | **Refresh Token** | 7 days | Get new access token | HTTP-only cookie (persistent) |
 
-### How It Works
+### How It Works (Best for SPAs)
 
 ```
-1. User logs in → get both tokens
-2. Client stores access token in memory
-3. Client stores refresh token in HTTP-only cookie
-4. Make API calls with access token
-5. Access token expires → client gets 401
-6. Client uses refresh token to get new access token
-7. Continue making API calls
-8. User logs out → server deletes refresh token + clear cookie
+1. User logs in → server generates both tokens
+2. Server sends access token in response body
+3. Server sets refresh token in HTTP-only cookie
+4. Client stores access token in memory (JavaScript variable)
+5. Make API calls with access token in Authorization header
+6. Access token expires → browser auto-sends refresh token in cookie
+7. Client uses refresh token to get new access token
+8. Continue making API calls
+9. User logs out → server blacklists refresh token + clear cookie
+
+Security benefits:
+- Access token in memory: XSS attack can't steal it (lost on page refresh)
+- Refresh token in HTTP-only cookie: XSS can't access, auto-sent by browser
+- Both tokens together: Automatic re-login without exposing user for long
 ```
 
 ### Implementation (NestJS)
@@ -476,7 +579,7 @@ Use two tokens:
 ```typescript
 // Generate both tokens
 @Post('/login')
-async login(@Body() body: LoginDto) {
+async login(@Body() body: LoginDto, @Res() res: Response) {
   const user = await this.validateUser(body.username, body.password);
 
   const accessToken = this.jwtService.sign(
@@ -492,11 +595,19 @@ async login(@Body() body: LoginDto) {
   // Store refresh token in database (for revocation)
   await this.authService.saveRefreshToken(user.id, refreshToken);
 
-  return {
-    accessToken,
-    refreshToken, // Send in HTTP-only cookie
-    expiresIn: 15 * 60, // 15 minutes in seconds
-  };
+  // Set refresh token as HTTP-only cookie (browser auto-sends)
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,        // JavaScript cannot access
+    secure: true,          // Only over HTTPS
+    sameSite: 'strict',    // CSRF protection
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  });
+
+  // Send access token in response (client stores in memory)
+  return res.json({
+    accessToken,           // Client stores in JavaScript variable
+    expiresIn: 15 * 60,   // 15 minutes in seconds
+  });
 }
 
 // Refresh endpoint
@@ -548,9 +659,137 @@ async logout(@Request() req) {
 
 ---
 
+## Comparing Authentication Approaches
+
+### Session-Based vs JWT vs Refresh Token Pattern
+
+| Aspect | Sessions | JWT (Simple) | JWT + Refresh Token |
+|--------|----------|--------------|-------------------|
+| **State** | Stateful (server) | Stateless | Hybrid (stateless access, stateful refresh) |
+| **Token Lifetime** | User-defined | Typically 24h+ | Access: 15m, Refresh: 7d |
+| **Revocation** | Immediate (delete session) | Hard (need blacklist) | Easy (blacklist refresh token) |
+| **XSS Protection** | Built-in (HTTP-only cookie) | Manual (localStorage risky) | Built-in + Memory (access in memory, refresh in cookie) |
+| **CORS Support** | Limited | Full | Full |
+| **Mobile Support** | No | Yes | Yes |
+| **Scalability** | Requires shared session store | No server storage needed | Minimal server storage |
+| **Best For** | Server-rendered apps | Microservices, APIs | SPAs, Modern web apps |
+
+### When to Use Each
+
+**Session-Based Authentication:**
+- ✅ Server-rendered applications (Django, Rails, traditional Node.js)
+- ✅ Same-origin requests only
+- ✅ Simple, traditional web applications
+- ❌ Not suitable for mobile or multi-domain services
+
+**Simple JWT (Token in JSON Response):**
+- ✅ Microservices architecture
+- ✅ Mobile applications
+- ✅ APIs consumed by multiple clients
+- ✅ Cross-domain requests
+- ⚠️ Requires careful storage (memory > localStorage)
+
+**JWT + Refresh Token Pattern (RECOMMENDED for SPAs):**
+- ✅ Single Page Applications (React, Vue, Angular)
+- ✅ Maximum security + UX balance
+- ✅ Revocation support (logout immediately)
+- ✅ Mobile applications
+- ✅ Modern architecture
+
+---
+
 ## Common Implementation Patterns
 
-### Pattern 1: Simple Password Login (Most Common)
+### Pattern 1: Password Login with Refresh Token (RECOMMENDED for SPAs)
+
+This is the security-first pattern recommended for modern Single Page Applications:
+
+```typescript
+// Backend - NestJS
+@Post('/login')
+async login(@Body() body: LoginDto, @Res() res: Response) {
+  const user = await this.usersService.findByEmail(body.email);
+
+  if (!user || !(await bcrypt.compare(body.password, user.passwordHash))) {
+    throw new UnauthorizedException('Invalid email or password');
+  }
+
+  const accessToken = this.jwtService.sign(
+    { userId: user.id },
+    { expiresIn: '15m' }
+  );
+
+  const refreshToken = this.jwtService.sign(
+    { userId: user.id, type: 'refresh' },
+    { expiresIn: '7d' }
+  );
+
+  // Save refresh token to database for revocation
+  await this.authService.saveRefreshToken(user.id, refreshToken);
+
+  // Set refresh token as HTTP-only cookie
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  });
+
+  // Send access token in body (client stores in memory)
+  return res.json({ accessToken });
+}
+
+// Frontend - React example
+const login = async (email, password) => {
+  const response = await fetch('/auth/login', {
+    method: 'POST',
+    credentials: 'include', // Important: include cookies
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+
+  const { accessToken } = await response.json();
+
+  // Store in memory (not localStorage!)
+  // In React, this might be useState or Zustand/Redux
+  setAuthState({ accessToken });
+};
+
+// When making API calls
+const apiCall = async (url) => {
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`
+    },
+    credentials: 'include' // Include cookies for refresh token
+  });
+
+  if (response.status === 401) {
+    // Access token expired
+    const refreshResponse = await fetch('/auth/refresh', {
+      method: 'POST',
+      credentials: 'include' // Browser sends refresh token cookie
+    });
+
+    if (refreshResponse.ok) {
+      const { accessToken: newToken } = await refreshResponse.json();
+      setAuthState({ accessToken: newToken });
+
+      // Retry original request
+      return apiCall(url);
+    } else {
+      // Refresh failed - user needs to login again
+      setAuthState({ accessToken: null });
+    }
+  }
+
+  return response;
+};
+```
+
+### Pattern 1b: Simple Password Login (Fastest to Implement, Less Secure)
+
+Use only if you have strong XSS protections and can't implement refresh tokens:
 
 ```typescript
 @Post('/login')
@@ -561,11 +800,18 @@ async login(@Body() body: LoginDto) {
     throw new UnauthorizedException('Invalid email or password');
   }
 
-  const token = this.jwtService.sign({ userId: user.id });
+  // Single token - token lifetime must be 24h minimum for UX
+  // BUT: stolen token is valid for 24h (higher risk)
+  const token = this.jwtService.sign(
+    { userId: user.id },
+    { expiresIn: '24h' }
+  );
 
   return { accessToken: token };
 }
 ```
+
+**⚠️ Warning**: This pattern sacrifices security for simplicity. The token is valid for a long time, so a stolen token is dangerous. Use Pattern 1 (refresh token) instead.
 
 ### Pattern 2: Social Login (Google/GitHub)
 
@@ -660,14 +906,32 @@ When implementing authentication, ensure you have:
 
 ## Key Takeaways
 
-1. **Choose one pattern**: JWT for modern apps, sessions for server-rendered, OAuth for social login
-2. **Hash passwords with bcrypt**: Non-negotiable
-3. **Use short access token lifetimes**: 15-60 minutes
-4. **Implement refresh tokens**: For revocation and UX balance
-5. **Authorize at every boundary**: Don't just check at endpoints
-6. **Use HTTPS everywhere**: Non-negotiable
-7. **Keep auth simple**: Don't over-engineer with custom solutions
-8. **Test edge cases**: Expired tokens, revoked access, concurrent login
+1. **Choose based on your architecture, not trends**:
+   - Server-rendered → Sessions
+   - SPA → JWT + Refresh Token (access in memory, refresh in HTTP-only cookie)
+   - Microservices → JWT
+   - Social login → OAuth 2.0
+
+2. **Never compromise on token storage for SPAs**:
+   - ❌ localStorage = XSS vulnerability
+   - ✅ Memory = Safe from XSS
+   - ✅ HTTP-only cookie (for refresh token) = Safe from XSS + auto-sent
+
+3. **Hash passwords with bcrypt**: Non-negotiable
+
+4. **Use short access token lifetimes**: 15-60 minutes (force refresh, limit damage if stolen)
+
+5. **Implement refresh tokens for SPAs**: Provides revocation + XSS protection + UX balance
+
+6. **Authorize at every boundary**: Don't just check at endpoints
+
+7. **Use HTTPS everywhere**: Non-negotiable
+
+8. **HTTP-only cookies are underrated**: Use them for web apps—they're secure by default
+
+9. **Keep auth simple**: Don't over-engineer with custom solutions
+
+10. **Test edge cases**: Expired tokens, revoked access, concurrent login
 
 ---
 
