@@ -389,6 +389,300 @@ Keep it concise, focus on implementation decisions that matter.
 
 ---
 
+## Phase 3.5: Quantitative Analysis
+
+### 🎯 Purpose
+**Quantify the system requirements** based on expected scale, performance targets, and costs. This validates your design can handle the load and determines when to scale.
+
+### 📝 What to Include
+
+**1. Performance Metrics Analysis**
+Calculate throughput, latency budgets, and identify bottlenecks.
+
+```
+Example: Task Management API
+
+Expected Scale:
+- Number of users: 10,000
+- Daily active users: 50% = 5,000/day
+- Average actions per user per day: 10
+- Daily requests: 50,000
+
+QPS Calculation:
+- Daily requests: 50,000
+- Per second: 50,000 / (24 * 3600) ≈ 0.58 QPS average
+- Peak (assume 10x during business hours): 5.8 QPS
+- Database queries per request: 2 (auth + main operation)
+- Peak database QPS: 11.6
+
+Latency Budget (95th percentile target: 200ms):
+- Network latency: 20ms (client → server)
+- API processing: 50ms (middleware, validation)
+- Database query: 100ms (find user + main query)
+- Serialization/response: 30ms
+- Total: 200ms ✓ Comfortable
+
+Bottleneck Analysis:
+- Database is the bottleneck (100ms of 200ms budget)
+- Queries must be optimized: indexes, select specific fields
+- No caching needed at this scale
+- Single database instance sufficient
+```
+
+**2. Capacity Planning**
+Quantify storage, memory, and server resources needed.
+
+```
+Storage Capacity:
+- Users: 10,000 users × 1KB = 10MB
+- Tasks: 100,000 tasks × 1.5KB = 150MB
+- Comments: 500,000 comments × 0.5KB = 250MB
+- Total initial: ~410MB
+
+Growth Projection:
+- New tasks per month: 50,000 × 1.5KB = 75MB
+- New comments per month: 100,000 × 0.5KB = 50MB
+- Monthly growth: 125MB
+- Yearly growth: 1.5GB
+
+Storage Timeline:
+- Year 1: 410MB + 1.5GB = 1.91GB
+- Year 2: 1.91GB + 1.5GB = 3.41GB
+- Year 3: 4.91GB
+- Note: Single database can handle 100GB+, no urgent scaling
+
+Memory Capacity:
+- Node.js baseline: 150MB
+- Database connection pool (20 connections): 20 × 5MB = 100MB
+- Cache layer (optional): 100MB
+- Total per instance: ~350MB
+- Recommendation: 2GB RAM instance (plenty of headroom)
+
+CPU/Server Capacity:
+- Peak QPS: 5.8 requests/second
+- Modern CPUs handle 1000+ QPS easily
+- CPU usage at peak: <5%
+- Recommendation: 2 CPU cores (t3.small or equivalent)
+
+Concurrent Users at Peak:
+- 5,000 daily active × 20% peak concurrency = 1,000 concurrent
+- Each user = 1 open socket
+- Database connection pool: 20 sufficient (with connection pooling)
+- Memory per connection: <1MB with pooling
+```
+
+**3. Cost Analysis**
+Quantify infrastructure and operational expenses.
+
+```
+Cloud Infrastructure Costs (AWS Example)
+
+Compute:
+- Instance type: t3.small (2 CPU, 2GB RAM)
+- Price: $0.0208/hour
+- Monthly: $0.0208 × 730 hours = $15.18
+- Annual: $181.80
+
+Database (RDS PostgreSQL):
+- Instance: db.t3.micro (1 CPU, 1GB RAM)
+- Price: $0.017/hour = $12.41/month
+- Storage: 5GB × $0.23/GB/month = $1.15/month
+- Backups: Included
+- Database subtotal: $13.56/month = $162.72/year
+
+Monitoring & Logs:
+- CloudWatch logs: ~1GB/day × 30 days = 30GB/month
+- CloudWatch price: $0.50/GB = $15/month
+- Application monitoring: $50/month (DataDog or similar)
+- Log subtotal: $65/month = $780/year
+
+Storage & Backups:
+- S3 backups: ~500MB × $0.023/GB = $0.01/month
+- CDN (if serving static assets): $0/month initially
+- Storage subtotal: $0.01/month
+
+Load Balancer (not needed yet):
+- Cost: $0/month (single instance)
+- Needed at: 50+ QPS or high availability requirement
+
+Total Initial Monthly: $15.18 + $13.56 + $65 = $93.74/month
+Total Initial Annual: $1,124.88/year
+
+Cost Per User: $93.74 / 10,000 = $0.009/user/month
+
+Scaling Scenario (10x growth: 100K users):
+- Compute: 2 instances × $15.18 = $30.36
+- Database: db.t3.small (larger) = $30.41/month
+- Load Balancer: $16.20/month
+- Network data transfer: $50/month
+- Logs: $150/month
+- Monitoring: $100/month
+- Total: $376.97/month = $4,523.64/year
+- Cost per user: $0.004/user/month
+
+Cost Optimization Opportunities:
+- Use reserved instances: save 30-40% on compute
+- Archive old tasks to S3: reduce database size
+- Compress logs: reduce CloudWatch costs
+- Use CDN for static assets: reduce bandwidth
+```
+
+**4. Scaling Decision Points**
+Define when and how to scale the system.
+
+```
+Performance Scaling:
+
+If QPS > 10 (peak):
+- Add load balancer ($16.20/month)
+- Add 2nd application server ($15.18/month)
+- Implement connection pooling
+- Cost increase: $31.38/month
+
+If QPS > 50:
+- Add read replicas for database
+- Implement caching layer (Redis)
+- Consider database sharding
+- Add CDN for assets
+
+Storage Scaling:
+
+If database > 100GB:
+- Archive historical tasks (> 2 years old) to S3
+- Implement table partitioning
+- Cost: reduce DB size × $0.23/GB
+- Move to RDS Multi-AZ for high availability
+
+If storage growth > 100GB/month:
+- Implement data tiering
+- Archive strategy becomes critical
+- Consider data retention policy
+
+Concurrency Scaling:
+
+If concurrent users > 1,000:
+- Increase database connection pool
+- Add read replicas
+- Implement session caching (Redis)
+
+Cost Scaling:
+
+If monthly cost > budget:
+- Use reserved instances (30% savings)
+- Archive old data
+- Reduce log retention
+- Implement autoscaling (pay only for what you use)
+```
+
+### Example: Complete Quantitative Analysis Output
+
+```markdown
+## Quantitative Analysis Summary
+
+### Performance Targets
+- Peak QPS: 5.8 requests/second
+- 95th percentile latency: 200ms
+- Database query time: <100ms
+- API processing time: <50ms
+
+### Capacity Requirements
+- Initial storage: 410MB
+- Database instance size: 5GB
+- Server memory: 2GB
+- CPU cores: 2
+- Concurrent users at peak: 1,000
+
+### Infrastructure Costs
+- Monthly: $93.74
+- Annual: $1,124.88
+- Cost per user: $0.009/month
+- Scaling to 10x: $376.97/month
+
+### Growth Timeline
+- Year 1: 1.91GB storage, $1,124.88 cost
+- Year 2: 3.41GB storage, $1,124.88 cost (no scaling needed)
+- Year 3: 4.91GB storage, $1,124.88 cost
+
+### Scaling Points (Triggers)
+- QPS > 10: Add load balancer + 2nd server (+$31.38/month)
+- Storage > 100GB: Archive old data
+- Concurrent users > 1,000: Add read replicas
+
+### Architectural Implications
+- Single server sufficient for 50 QPS
+- Single database sufficient for 100GB
+- No caching needed at current scale
+- No sharding needed at current scale
+```
+
+### 🤖 How AI Helps
+
+**Prompt to AI:**
+```
+Based on these requirements and design:
+
+Requirements:
+[Paste FR/NFR from Phase 2]
+
+Expected Scale:
+- Number of users: 10,000
+- Daily active users: 50%
+- Actions per user per day: 10
+- Expected growth rate: 50% per year
+
+Design:
+[Paste API design from Phase 3]
+
+Generate Quantitative Analysis including:
+
+1. Performance Metrics
+   - Calculate QPS (average and peak)
+   - Allocate latency budget (network, API, DB, serialization)
+   - Identify performance bottlenecks
+
+2. Capacity Planning
+   - Storage needed (initial, yearly, 3-year projection)
+   - RAM needed (Node.js, connections, caching)
+   - CPU/server resources
+   - Concurrent user capacity
+
+3. Cost Analysis (assume AWS cloud)
+   - Compute instance costs
+   - Database costs
+   - Storage and backup costs
+   - Monitoring/logging costs
+   - Total monthly and annual
+   - Cost per user
+
+4. Scaling Decision Points
+   - At what metrics does the system need to scale?
+   - What changes to architecture for each scaling point?
+   - Cost impact of scaling
+```
+
+**What to do with AI output:**
+- Review numbers for reasonableness
+- Verify assumptions (daily active users, actions per user, growth rate)
+- Validate against actual business requirements
+- Challenge any bottlenecks (is database really the limit?)
+- Adjust thresholds based on your risk tolerance
+- Get buy-in from DevOps/Infrastructure team on costs
+- Document assumptions clearly
+
+### ✅ Definition of Done for Phase 3.5
+- [ ] Expected scale documented (users, daily actives, growth rate)
+- [ ] QPS calculated (average and peak)
+- [ ] Latency budget allocated by component
+- [ ] Storage needs calculated (initial and multi-year)
+- [ ] Server resources estimated (CPU, RAM, disk)
+- [ ] Infrastructure costs calculated (monthly and annual)
+- [ ] Scaling decision points identified with triggers
+- [ ] Architectural implications clear (caching? sharding? replicas?)
+- [ ] Team agrees numbers are reasonable
+- [ ] Assumptions documented for future reference
+
+---
+
 ## Phase 4: Swagger Doc
 
 ### 🎯 Purpose
@@ -1052,7 +1346,8 @@ Dockerfile, deployment manifest, pre-deployment checklist, rollback procedure.
 | 1. Initial Spec | Ideas | Clear problem & goals | Generate spec template |
 | 2. Requirements | Spec | Detailed requirements | Generate FR/NFR list |
 | 3. Design Doc | Requirements | Architecture decisions | Generate design template |
-| 4. Swagger Doc | Design | API contract | Generate OpenAPI spec |
+| 3.5. Quantitative Analysis | Design | Metrics & costs | Generate analysis & calculations |
+| 4. Swagger Doc | Design + Metrics | API contract | Generate OpenAPI spec |
 | 5. TDD Implementation | Swagger | Working code + tests | Generate tests & DTOs |
 | 6. Integration Tests | Code | Confidence in workflows | Generate E2E tests |
 | 7. Deploy | Code + Tests | Production system | Generate deployment code |
@@ -1065,12 +1360,15 @@ Dockerfile, deployment manifest, pre-deployment checklist, rollback procedure.
 1. Spec = everyone agrees what we're building
 2. Requirements = everyone knows what success looks like
 3. Design = everyone sees how we'll build it
-4. Swagger = frontend/backend teams can work in parallel
-5. TDD = code exists and is tested
-6. Integration = systems work together
-7. Deploy = users can use it
+4. Quantitative Analysis = everyone knows if design can handle the load
+5. Swagger = frontend/backend teams can work in parallel
+6. TDD = code exists and is tested
+7. Integration = systems work together
+8. Deploy = users can use it
 
 **AI's role:** Accelerate each phase by generating drafts. Your role: validate, refine, and decide.
+
+**Why Phase 3.5 matters:** You can design the perfect architecture, but if it can't handle the expected load or costs $10K/month when your budget is $100/month, you need to know before coding. Quantitative Analysis catches these issues early.
 
 ---
 
