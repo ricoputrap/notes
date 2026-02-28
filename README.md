@@ -13,6 +13,7 @@ A collection of learning materials and guides on software engineering concepts.
 - **[Feature Flags](./feature-flags.md)** - Practical guide to implementing feature flags with React and NestJS examples for controlled rollouts
 - **[Software Testing Fundamentals](./software-testing-fundamentals.md)** - Practical testing guide applying Pareto principle for maximum coverage with minimal effort
 - **[Logging Best Practices](./logging-best-practices.md)** - Strategic guide to logging covering why, when, what to log and how to extract value from logs
+- **[Spec-Driven Development Workflow](./spec-driven-development-workflow.md)** - 7-phase AI-assisted workflow: Spec → Requirements → Design → Swagger → TDD Implementation → Integration Testing → Deployment
 
 ## Quick Navigation
 
